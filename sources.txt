@@ -10,3 +10,5 @@ tetronos/tetron-systray
 tetronos/tetron-sync-receiver
 tetronos/tetron-hosts
 tetronos/tetron-veilid
+tetronos/tetron-os
+tetronos/casttui
