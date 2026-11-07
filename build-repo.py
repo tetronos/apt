@@ -64,15 +64,26 @@ def collect(sources, keep, cache):
             names = sorted(n for n in assets if n.endswith(".deb"))
             if not names:
                 continue
+            sums = {}  # a release-wide SHA256SUMS file ("<hash>  <name>" lines), e.g. tetron-os
+            if "SHA256SUMS" in assets:
+                sumsfile = os.path.join(cache, f"{repo.replace('/', '_')}_{rel['tag_name']}_SHA256SUMS")
+                fetch(assets["SHA256SUMS"], sumsfile)
+                for line in open(sumsfile):
+                    parts = line.split()
+                    if len(parts) == 2:
+                        sums[parts[1].lstrip("*")] = parts[0]
             for n in names:
                 dest = os.path.join(cache, n)
                 fetch(assets[n], dest)
+                want = sums.get(n)
                 if n + ".sha256" in assets:
                     sumfile = dest + ".sha256"
                     fetch(assets[n + ".sha256"], sumfile)
                     want = open(sumfile).read().split()[0]
-                    if sha256(dest) != want:
-                        sys.exit(f"checksum mismatch: {repo} {rel['tag_name']} {n}")
+                if want is None:
+                    print(f"  note: {repo} {rel['tag_name']} {n} has no published checksum", file=sys.stderr)
+                elif sha256(dest) != want:
+                    sys.exit(f"checksum mismatch: {repo} {rel['tag_name']} {n}")
                 debs.append((repo, rel["tag_name"], dest))
             used += 1
             if used == keep:
