@@ -1,0 +1,77 @@
+name: Publish
+
+# Builds the apt repository from the suite's release .debs (build-repo.py), checks it with apt in a clean
+# Debian 13 container, and publishes it to https://tetronos.github.io/apt/ through GitHub Pages.
+# Publishing happens only when the APT_SIGNING_KEY secret exists (the archive signing subkey, armored).
+# Without it the run builds an unsigned tree, checks the layout and keeps it as an artifact for inspection.
+# Secrets: APT_SIGNING_KEY (required to publish), APT_SIGNING_PASSPHRASE (if the subkey has one).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * *"
+  repository_dispatch:
+    types: [suite-release]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      signed: ${{ steps.key.outputs.signed }}
+    env:
+      APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+      APT_SIGNING_PASSPHRASE: ${{ secrets.APT_SIGNING_PASSPHRASE }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq apt-utils xz-utils gnupg >/dev/null
+      - name: Import signing key
+        id: key
+        run: |
+          if [ -z "$APT_SIGNING_KEY" ]; then echo "signed=false" >> "$GITHUB_OUTPUT"; echo "No APT_SIGNING_KEY: unsigned build, nothing is published."; exit 0; fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"; mkdir -m 700 "$GNUPGHOME"
+          printf '%s\n' "$APT_SIGNING_KEY" | gpg --batch --import
+          fpr=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"; echo "KEY_FPR=$fpr" >> "$GITHUB_ENV"
+          echo "signed=true" >> "$GITHUB_OUTPUT"; echo "Signing with $fpr"
+      - name: Build
+        run: |
+          if [ -n "${KEY_FPR:-}" ]; then ./build-repo.py --out _site --key "$KEY_FPR"; else ./build-repo.py --out _site; fi
+      - name: Check with apt in Debian 13
+        if: steps.key.outputs.signed == 'true'
+        run: |
+          docker run --rm -v "$PWD/_site:/repo:ro" debian:trixie bash -c '
+            set -e
+            cp /repo/tetronos-archive-keyring.gpg /usr/share/keyrings/
+            printf "Types: deb\nURIs: file:/repo\nSuites: stable\nComponents: main\nSigned-By: /usr/share/keyrings/tetronos-archive-keyring.gpg\n" > /etc/apt/sources.list.d/tetronos.sources
+            apt-get update 2>&1 | tee /tmp/u; ! grep -E "^(W|E):" /tmp/u
+            apt-cache policy tetron tetron-wm | grep Candidate'
+      - name: Check layout (unsigned)
+        if: steps.key.outputs.signed != 'true'
+        run: test -s _site/dists/stable/Release && test -s _site/dists/stable/main/binary-amd64/Packages && ls -R _site/dists
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./_site
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.signed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,12 @@
+# GitHub repos whose releases carry .deb files for the tetronos apt repository.
+# One owner/repo per line. A repo with no .deb in its releases is skipped (picked up once it ships them).
+tetronos/tetron
+tetronos/tetron-wm
+tetronos/tetron-webui
+tetronos/tetron-tui
+tetronos/tetron-browser
+tetronos/tetron-messageboard
+tetronos/tetron-systray
+tetronos/tetron-sync-receiver
+tetronos/tetron-hosts
+tetronos/tetron-veilid
