@@ -147,6 +147,7 @@ def page(out, base, seen):
     rows = "\n".join(f"<tr><td>{html.escape(p)}</td><td>{html.escape(v)}</td><td>{html.escape(a)}</td></tr>"
                      for (p, v, a) in sorted(seen))
     src = (f"Types: deb\nURIs: {base}\nSuites: {SUITE}\nComponents: {COMPONENT}\n"
+           f"Architectures: {' '.join(ARCHES)}\n"
            f"Signed-By: /usr/share/keyrings/tetronos-archive-keyring.gpg\n")
     open(os.path.join(out, "tetronos.sources"), "w").write(src)
     open(os.path.join(out, "index.html"), "w").write(f"""<!doctype html>
