@@ -13,6 +13,8 @@ sudo apt update
 sudo apt install tetron
 ```
 
+Besides the suite, `sources.txt` lists upstream projects whose own `.deb` files are mirrored unchanged (fresh). A line may add globs after the repo so only matching `.deb` names are taken.
+
 Keeping the previous release means `sudo apt install tetron=<previous version>` goes back one release.
 
 Build locally (unsigned unless `--key` is given): `./build-repo.py --out /path/to/out [--key FINGERPRINT]`.

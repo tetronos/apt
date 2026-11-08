@@ -1,5 +1,7 @@
 # GitHub repos whose releases carry .deb files for the tetronos apt repository.
 # One owner/repo per line. A repo with no .deb in its releases is skipped (picked up once it ships them).
+# Optional globs after the repo: only .deb names matching one of them are taken (for upstreams that publish
+# several builds of the same package and version).
 tetronos/tetron
 tetronos/tetron-wm
 tetronos/tetron-webui
@@ -12,3 +14,6 @@ tetronos/tetron-hosts
 tetronos/tetron-veilid
 tetronos/tetron-os
 tetronos/casttui
+# Upstream, mirrored unchanged: fresh, the terminal editor of the tetron-wm desktop size. Its
+# .debian-testing.deb builds carry the same package name and version, so only the plain builds are taken.
+sinelaw/fresh fresh-editor_*_amd64.deb fresh-editor_*_arm64.deb

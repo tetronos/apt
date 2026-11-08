@@ -18,7 +18,7 @@ Layout:
   pool/main/<first letter>/<package>/<file>.deb
 Needs: python3, dpkg-deb, apt-ftparchive (apt-utils), gzip, xz, gpg (only with --key).
 """
-import argparse, gzip, hashlib, html, json, lzma, os, shutil, subprocess, sys, urllib.request
+import argparse, fnmatch, gzip, hashlib, html, json, lzma, os, shutil, subprocess, sys, urllib.request
 
 ARCHES = ["amd64", "arm64"]
 SUITE, COMPONENT = "stable", "main"
@@ -55,13 +55,15 @@ def field(deb, name):
 
 
 def collect(sources, keep, cache):
+    """sources: (owner/repo, globs) pairs; with globs, only .deb names matching one of them are taken."""
     debs = []
-    for repo in sources:
+    for repo, globs in sources:
         rels = [r for r in api(f"repos/{repo}/releases?per_page=30") if not r["draft"] and not r["prerelease"]]
         used = 0
         for rel in rels:
             assets = {a["name"]: a["browser_download_url"] for a in rel["assets"]}
-            names = sorted(n for n in assets if n.endswith(".deb"))
+            names = sorted(n for n in assets if n.endswith(".deb")
+                           and (not globs or any(fnmatch.fnmatchcase(n, g) for g in globs)))
             if not names:
                 continue
             sums = {}  # a release-wide SHA256SUMS file ("<hash>  <name>" lines), e.g. tetron-os
@@ -184,8 +186,8 @@ def main():
     ap.add_argument("--key")
     ap.add_argument("--base-url", default="https://tetronos.github.io/apt")
     a = ap.parse_args()
-    sources = [l.split("#")[0].strip() for l in open(a.sources)]
-    sources = [s for s in sources if s]
+    lines = [l.split("#")[0].split() for l in open(a.sources)]
+    sources = [(l[0], l[1:]) for l in lines if l]
     if os.path.exists(a.out) and os.listdir(a.out):
         sys.exit(f"--out {a.out} is not empty")
     os.makedirs(a.out, exist_ok=True)
