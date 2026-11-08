@@ -5,20 +5,27 @@ Nothing is rebuilt: each listed repo's latest N releases (not drafts, not pre-re
 against their .sha256 files when present, placed in pool/, indexed with apt-ftparchive and, with --key, signed.
 
 Usage:
-  build-repo.py --out DIR [--sources sources.txt] [--keep 2] [--cache DIR] [--key KEYID] [--base-url URL]
+  build-repo.py --out DIR [--sources sources.txt] [--lists lists.txt] [--keep 2] [--cache DIR] [--key KEYID]
+                [--base-url URL]
 
   --key KEYID   sign InRelease and Release.gpg with this key (gpg uses $GNUPGHOME) and export its public
                 key as tetronos-archive-keyring.gpg (binary) and .asc. Without --key the repo is unsigned
                 (for local checks only; apt refuses it).
   GITHUB_TOKEN  optional; raises the GitHub API rate limit (set in CI).
 
+  --lists FILE  app lists to publish, one "<major.minor> <owner/repo> <git ref>" per line: the repo's
+                assets/catalog.json at that ref goes to lists/<major.minor>/ when its Cargo.toml version has
+                that minor and the catalog checks out; otherwise that line is skipped with a warning (the apt
+                repo is published either way, and tetron-wm keeps its built-in list).
+
 Layout:
+  lists/<major.minor>/{catalog.json,suite-apps.txt,SHA256SUMS[,SHA256SUMS.asc]}
   dists/stable/{InRelease,Release,Release.gpg}
   dists/stable/main/binary-{amd64,arm64}/Packages{,.gz,.xz}
   pool/main/<first letter>/<package>/<file>.deb
 Needs: python3, dpkg-deb, apt-ftparchive (apt-utils), gzip, xz, gpg (only with --key).
 """
-import argparse, fnmatch, gzip, hashlib, html, json, lzma, os, shutil, subprocess, sys, urllib.request
+import argparse, fnmatch, gzip, hashlib, html, json, lzma, os, re, shutil, subprocess, sys, urllib.request
 
 ARCHES = ["amd64", "arm64"]
 SUITE, COMPONENT = "stable", "main"
@@ -94,6 +101,67 @@ def collect(sources, keep, cache):
     return debs
 
 
+LIST_SCHEMA = 1  # the catalog layout tetron-wm reads; a new layout gets a new core minor
+
+
+def raw(repo, ref, path):
+    with urllib.request.urlopen(f"https://raw.githubusercontent.com/{repo}/{ref}/{path}", timeout=60) as r:
+        return r.read()
+
+
+def list_problem(minor, cargo, catalog):
+    """Why this catalog must not be published for `minor`, or None."""
+    m = re.search(r'^version\s*=\s*"(\d+\.\d+)\.', cargo, re.M)
+    if not m or m.group(1) != minor:
+        return f"its Cargo.toml version is {m.group(1) + '.x' if m else 'unknown'}, not {minor}.x"
+    try:
+        doc = json.loads(catalog)
+    except ValueError as e:
+        return f"catalog.json does not parse ({e})"
+    if not isinstance(doc, dict) or doc.get("schema") != LIST_SCHEMA:
+        return f"catalog.json schema is {doc.get('schema') if isinstance(doc, dict) else 'missing'}, not {LIST_SCHEMA}"
+    if not doc.get("apps") or not any(":" in l for l in str(doc.get("suite_apps", "")).splitlines()):
+        return "catalog.json has no apps or no suite app list"
+    return None
+
+
+def publish_lists(lists, out, fetch_raw=raw):
+    """lists: (minor, repo, ref) triples. Returns the minors published."""
+    done = []
+    for minor, repo, ref in lists:
+        try:
+            cargo = fetch_raw(repo, ref, "Cargo.toml").decode()
+            catalog = fetch_raw(repo, ref, "assets/catalog.json")
+        except OSError as e:
+            print(f"  warning: lists {minor}: {repo}@{ref} not fetched ({e}); skipped", file=sys.stderr)
+            continue
+        why = list_problem(minor, cargo, catalog)
+        if why:
+            print(f"  warning: lists {minor}: {repo}@{ref} skipped: {why}", file=sys.stderr)
+            continue
+        d = os.path.join(out, "lists", minor)
+        os.makedirs(d, exist_ok=True)
+        files = {"catalog.json": catalog, "suite-apps.txt": json.loads(catalog)["suite_apps"].encode()}
+        for name, data in files.items():
+            open(os.path.join(d, name), "wb").write(data)
+        open(os.path.join(d, "SHA256SUMS"), "w").write(
+            "".join(f"{hashlib.sha256(data).hexdigest()}  {name}\n" for name, data in files.items()))
+        done.append(minor)
+        print(f"lists {minor}: {repo}@{ref}", file=sys.stderr)
+    return done
+
+
+def sign_lists(out, minors, key):
+    g = ["gpg", "--batch", "--yes", "--pinentry-mode", "loopback", "--local-user", key]
+    pw = os.environ.get("APT_SIGNING_PASSPHRASE")
+    if pw:
+        g += ["--passphrase-fd", "0"]
+    for minor in minors:
+        f = os.path.join(out, "lists", minor, "SHA256SUMS")
+        subprocess.run(g + ["--detach-sign", "--armor", "--digest-algo", "SHA512", "-o", f + ".asc", f],
+                       input=(pw or "").encode(), check=True, capture_output=True)
+
+
 def place(debs, out):
     seen = {}
     for repo, tag, path in debs:
@@ -145,7 +213,7 @@ def sign(out, key):
     open(os.path.join(out, "tetronos-archive-keyring.asc"), "wb").write(asc)
 
 
-def page(out, base, seen):
+def page(out, base, seen, minors=()):
     rows = "\n".join(f"<tr><td>{html.escape(p)}</td><td>{html.escape(v)}</td><td>{html.escape(a)}</td></tr>"
                      for (p, v, a) in sorted(seen))
     src = (f"Types: deb\nURIs: {base}\nSuites: {SUITE}\nComponents: {COMPONENT}\n"
@@ -167,7 +235,7 @@ The latest and the previous release of each package are kept, so <code>apt insta
 sudo curl -fsSLo /etc/apt/sources.list.d/tetronos.sources {base}/tetronos.sources
 sudo apt update
 sudo apt install tetron</pre>
-<h2>Packages</h2>
+{lists_html(base, minors)}<h2>Packages</h2>
 <table><tr><th align=left>package</th><th align=left>version</th><th align=left>arch</th></tr>
 {rows}
 </table>
@@ -177,10 +245,20 @@ sudo apt install tetron</pre>
     open(os.path.join(out, ".nojekyll"), "w").write("")
 
 
+def lists_html(base, minors):
+    if not minors:
+        return ""
+    items = "".join(f'<li><a href="{base}/lists/{m}/catalog.json">{m}</a> '
+                    f'(<a href="{base}/lists/{m}/suite-apps.txt">suite-apps.txt</a>)</li>' for m in minors)
+    return ("<h2>App lists</h2>\n<p>The tetron-wm app catalog for each core minor version, read by the Store's "
+            f"Update list button and the suite installer.</p>\n<ul>{items}</ul>\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", required=True)
     ap.add_argument("--sources", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources.txt"))
+    ap.add_argument("--lists", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "lists.txt"))
     ap.add_argument("--keep", type=int, default=2)
     ap.add_argument("--cache", default=None)
     ap.add_argument("--key")
@@ -188,6 +266,15 @@ def main():
     a = ap.parse_args()
     lines = [l.split("#")[0].split() for l in open(a.sources)]
     sources = [(l[0], l[1:]) for l in lines if l]
+    lists = []
+    if os.path.exists(a.lists):
+        for l in (l.split("#")[0].split() for l in open(a.lists)):
+            if l and len(l) != 3:
+                sys.exit(f"{a.lists}: want '<major.minor> <owner/repo> <ref>', got {' '.join(l)}")
+            if l and any(x[0] == l[0] for x in lists):
+                sys.exit(f"{a.lists}: {l[0]} is listed twice")
+            if l:
+                lists.append(tuple(l))
     if os.path.exists(a.out) and os.listdir(a.out):
         sys.exit(f"--out {a.out} is not empty")
     os.makedirs(a.out, exist_ok=True)
@@ -197,9 +284,11 @@ def main():
     if not a.cache:
         shutil.rmtree(cache)
     index(a.out)
+    minors = publish_lists(lists, a.out)
     if a.key:
         sign(a.out, a.key)
-    page(a.out, a.base_url.rstrip("/"), seen)
+        sign_lists(a.out, minors, a.key)
+    page(a.out, a.base_url.rstrip("/"), seen, minors)
     print(f"{len(seen)} package files in {a.out}{'' if a.key else ' (UNSIGNED)'}", file=sys.stderr)
 
 

@@ -1,0 +1,6 @@
+# tetron-wm app lists published at https://tetronos.github.io/apt/lists/<major.minor>/ (catalog.json,
+# suite-apps.txt, SHA256SUMS). One "<major.minor> <owner/repo> <git ref>" per line. tetron-wm fetches the
+# directory of its own core minor, so a list written for a newer core never reaches an older one.
+# When tetron-wm main moves to a new minor, point the old minor at its last release tag (or a branch) and add
+# a line for the new minor on main; a line whose ref has another minor is skipped with a warning.
+0.15 tetronos/tetron-wm main

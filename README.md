@@ -18,3 +18,7 @@ Besides the suite, `sources.txt` lists upstream projects whose own `.deb` files 
 Keeping the previous release means `sudo apt install tetron=<previous version>` goes back one release.
 
 Build locally (unsigned unless `--key` is given): `./build-repo.py --out /path/to/out [--key FINGERPRINT]`.
+
+## App lists
+
+`lists.txt` names, per tetron-wm core minor version, the git ref whose `assets/catalog.json` is published at `https://tetronos.github.io/apt/lists/<major.minor>/` as `catalog.json`, `suite-apps.txt` (taken from the catalog) and `SHA256SUMS` (signed as `SHA256SUMS.asc` when the build signs). tetron-wm's Store Update list button and the suite installer read the directory of their own minor, so the app list can change without a tetron-wm release and a list written for a newer core never reaches an older one. A line is skipped with a warning when its ref has another minor in `Cargo.toml` or its catalog does not check out; the apt repository is published either way. When tetron-wm `main` moves to a new minor, point the old minor at its last release tag and add a line for the new one.
