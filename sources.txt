@@ -9,6 +9,7 @@ tetronos/tetron-tui
 tetronos/tetron-browser
 tetronos/tetron-messageboard
 tetronos/tetron-systray
+tetronos/tetron-appstore
 tetronos/tetron-sync-receiver
 tetronos/tetron-hosts
 tetronos/tetron-veilid
