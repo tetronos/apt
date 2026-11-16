@@ -67,6 +67,7 @@ def collect(sources, keep, cache):
     for repo, globs in sources:
         rels = [r for r in api(f"repos/{repo}/releases?per_page=30") if not r["draft"] and not r["prerelease"]]
         used = 0
+        taken = set()  # a file name already taken from a newer release: apt keeps one file per name and the newest wins
         for rel in rels:
             assets = {a["name"]: a["browser_download_url"] for a in rel["assets"]}
             names = sorted(n for n in assets if n.endswith(".deb")
@@ -82,6 +83,9 @@ def collect(sources, keep, cache):
                     if len(parts) == 2:
                         sums[parts[1].lstrip("*")] = parts[0]
             for n in names:
+                if n in taken:
+                    continue
+                taken.add(n)
                 dest = os.path.join(cache, n)
                 fetch(assets[n], dest)
                 want = sums.get(n)
